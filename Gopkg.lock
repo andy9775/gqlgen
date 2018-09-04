@@ -2,6 +2,14 @@
 
 
 [[projects]]
+  branch = "master"
+  digest = "1:99b2e09d42b4d0929e9e6ac496922f5221baa79b60968576d5ce310b44640c3b"
+  name = "github.com/agnivade/levenshtein"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "1787a73e302ce294513cfab1982e186f5cf8985f"
+
+[[projects]]
   digest = "1:a2c1d0e43bd3baaa071d1b9ed72c27d78169b2b269f71c105ac4ba34b1be4a39"
   name = "github.com/davecgh/go-spew"
   packages = ["spew"]
@@ -51,6 +59,17 @@
   pruneopts = "UT"
   revision = "ea4d1f681babbce9545c9c5f3d5194a789c89f5b"
   version = "v1.2.0"
+
+[[projects]]
+  branch = "master"
+  digest = "1:cf296baa185baae04a9a7004efee8511d08e2f5f51d4cbe5375da89722d681db"
+  name = "github.com/hashicorp/golang-lru"
+  packages = [
+    ".",
+    "simplelru",
+  ]
+  pruneopts = "UT"
+  revision = "0fb14efe8c47ae851c0034ed7a448854d3d34cf3"
 
 [[projects]]
   branch = "master"
@@ -135,12 +154,36 @@
   version = "v1.2.1"
 
 [[projects]]
+  digest = "1:b24d38b282bacf9791408a080f606370efa3d364e4b5fd9ba0f7b87786d3b679"
+  name = "github.com/urfave/cli"
+  packages = ["."]
+  pruneopts = "UT"
+  revision = "cfb38830724cc34fedffe9a2a29fb54fa9169cd1"
+  version = "v1.20.0"
+
+[[projects]]
   branch = "master"
   digest = "1:3684f335059f8441260c3e949c0b99de97ea1057ecc493fdbd72ff3c27863277"
   name = "github.com/vektah/dataloaden"
   packages = ["."]
   pruneopts = "UT"
   revision = "314ac81052eedc03ac0a79bdc89d05a49a2a5814"
+
+[[projects]]
+  branch = "master"
+  digest = "1:3e2c3d0b8cb780a09467884bebc032c831ae273d1d993b8f55fa61084e37278c"
+  name = "github.com/vektah/gqlparser"
+  packages = [
+    ".",
+    "ast",
+    "gqlerror",
+    "lexer",
+    "parser",
+    "validator",
+    "validator/rules",
+  ]
+  pruneopts = "UT"
+  revision = "91abf84889ffb5ab4537b0ae1b1670109a9fbc28"
 
 [[projects]]
   branch = "master"
@@ -201,6 +244,7 @@
   input-imports = [
     "github.com/go-chi/chi",
     "github.com/gorilla/websocket",
+    "github.com/hashicorp/golang-lru",
     "github.com/mitchellh/mapstructure",
     "github.com/opentracing-contrib/go-stdlib/nethttp",
     "github.com/opentracing/opentracing-go",
@@ -209,7 +253,12 @@
     "github.com/pkg/errors",
     "github.com/stretchr/testify/assert",
     "github.com/stretchr/testify/require",
+    "github.com/urfave/cli",
     "github.com/vektah/dataloaden",
+    "github.com/vektah/gqlparser",
+    "github.com/vektah/gqlparser/ast",
+    "github.com/vektah/gqlparser/gqlerror",
+    "github.com/vektah/gqlparser/validator",
     "golang.org/x/tools/go/loader",
     "golang.org/x/tools/imports",
     "gopkg.in/yaml.v2",

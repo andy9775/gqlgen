@@ -2,7 +2,7 @@
 linkTitle: Custom Scalars
 title: Using custom graphql types in golang
 description: Defining custom GraphQL scalar types using gqlgen
-menu: main
+menu: { main: { parent: 'reference' } }
 ---
 
 There are two different ways to implement scalars in gqlgen, depending on your need.
@@ -68,7 +68,7 @@ import (
 	"io"
 	"strings"
 	
-	"github.com/vektah/gqlgen/graphql"
+	"github.com/99designs/gqlgen/graphql"
 )
 
 
@@ -103,4 +103,4 @@ models:
     model: github.com/me/mypkg.MyCustomBooleanScalar
 ```
 
-see the [example/scalars](https://github.com/vektah/gqlgen/tree/master/example/scalars) package for more examples.
+see the [example/scalars](https://github.com/99designs/gqlgen/tree/master/example/scalars) package for more examples.

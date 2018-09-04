@@ -1,8 +1,9 @@
-/internal/tests/testdata/graphql-js
 /vendor
 /docs/public
 /example/chat/node_modules
+/integration/node_modules
+/integration/schema-fetched.graphql
 /example/chat/package-lock.json
-/codegen/testdata/gen
+/codegen/gen
 
 .idea/

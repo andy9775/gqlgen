@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/99designs/gqlgen/complexity"
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/gorilla/websocket"
-	"github.com/vektah/gqlgen/graphql"
-	"github.com/vektah/gqlgen/neelance/errors"
-	"github.com/vektah/gqlgen/neelance/query"
-	"github.com/vektah/gqlgen/neelance/validation"
+	"github.com/hashicorp/golang-lru"
+	"github.com/vektah/gqlparser"
+	"github.com/vektah/gqlparser/ast"
+	"github.com/vektah/gqlparser/gqlerror"
+	"github.com/vektah/gqlparser/validator"
 )
 
 type params struct {
@@ -21,14 +25,16 @@ type params struct {
 }
 
 type Config struct {
-	upgrader       websocket.Upgrader
-	recover        graphql.RecoverFunc
-	errorPresenter graphql.ErrorPresenterFunc
-	resolverHook   graphql.ResolverMiddleware
-	requestHook    graphql.RequestMiddleware
+	cacheSize       int
+	upgrader        websocket.Upgrader
+	recover         graphql.RecoverFunc
+	errorPresenter  graphql.ErrorPresenterFunc
+	resolverHook    graphql.FieldMiddleware
+	requestHook     graphql.RequestMiddleware
+	complexityLimit int
 }
 
-func (c *Config) newRequestContext(doc *query.Document, query string, variables map[string]interface{}) *graphql.RequestContext {
+func (c *Config) newRequestContext(doc *ast.QueryDocument, query string, variables map[string]interface{}) *graphql.RequestContext {
 	reqCtx := graphql.NewRequestContext(doc, query, variables)
 	if hook := c.recover; hook != nil {
 		reqCtx.Recover = hook
@@ -72,11 +78,17 @@ func ErrorPresenter(f graphql.ErrorPresenterFunc) Option {
 	}
 }
 
+// ComplexityLimit sets a maximum query complexity that is allowed to be executed.
+// If a query is submitted that exceeds the limit, a 422 status code will be returned.
+func ComplexityLimit(limit int) Option {
+	return func(cfg *Config) {
+		cfg.complexityLimit = limit
+	}
+}
+
 // ResolverMiddleware allows you to define a function that will be called around every resolver,
 // useful for tracing and logging.
-// It will only be called for user defined resolvers, any direct binding to models is assumed
-// to cost nothing.
-func ResolverMiddleware(middleware graphql.ResolverMiddleware) Option {
+func ResolverMiddleware(middleware graphql.FieldMiddleware) Option {
 	return func(cfg *Config) {
 		if cfg.resolverHook == nil {
 			cfg.resolverHook = middleware
@@ -110,8 +122,19 @@ func RequestMiddleware(middleware graphql.RequestMiddleware) Option {
 	}
 }
 
+// CacheSize sets the maximum size of the query cache.
+// If size is less than or equal to 0, the cache is disabled.
+func CacheSize(size int) Option {
+	return func(cfg *Config) {
+		cfg.cacheSize = size
+	}
+}
+
+const DefaultCacheSize = 1000
+
 func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc {
 	cfg := Config{
+		cacheSize: DefaultCacheSize,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -120,6 +143,17 @@ func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc 
 
 	for _, option := range options {
 		option(&cfg)
+	}
+
+	var cache *lru.Cache
+	if cfg.cacheSize > 0 {
+		var err error
+		cache, err = lru.New(DefaultCacheSize)
+		if err != nil {
+			// An error is only returned for non-positive cache size
+			// and we already checked for that.
+			panic("unexpected error creating cache: " + err.Error())
+		}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -141,13 +175,13 @@ func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc 
 			reqParams.OperationName = r.URL.Query().Get("operationName")
 
 			if variables := r.URL.Query().Get("variables"); variables != "" {
-				if err := json.Unmarshal([]byte(variables), &reqParams.Variables); err != nil {
+				if err := jsonDecode(strings.NewReader(variables), &reqParams.Variables); err != nil {
 					sendErrorf(w, http.StatusBadRequest, "variables could not be decoded")
 					return
 				}
 			}
 		case http.MethodPost:
-			if err := json.NewDecoder(r.Body).Decode(&reqParams); err != nil {
+			if err := jsonDecode(r.Body, &reqParams); err != nil {
 				sendErrorf(w, http.StatusBadRequest, "json body could not be decoded: "+err.Error())
 				return
 			}
@@ -157,25 +191,42 @@ func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc 
 		}
 		w.Header().Set("Content-Type", "application/json")
 
-		doc, qErr := query.Parse(reqParams.Query)
-		if qErr != nil {
-			sendError(w, http.StatusUnprocessableEntity, qErr)
+		var doc *ast.QueryDocument
+		if cache != nil {
+			val, ok := cache.Get(reqParams.Query)
+			if ok {
+				doc = val.(*ast.QueryDocument)
+			}
+		}
+		if doc == nil {
+			var qErr gqlerror.List
+			doc, qErr = gqlparser.LoadQuery(exec.Schema(), reqParams.Query)
+			if len(qErr) > 0 {
+				sendError(w, http.StatusUnprocessableEntity, qErr...)
+				return
+			}
+			if cache != nil {
+				cache.Add(reqParams.Query, doc)
+			}
+		}
+
+		op := doc.Operations.ForName(reqParams.OperationName)
+		if op == nil {
+			sendErrorf(w, http.StatusUnprocessableEntity, "operation %s not found", reqParams.OperationName)
 			return
 		}
 
-		errs := validation.Validate(exec.Schema(), doc)
-		if len(errs) != 0 {
-			sendError(w, http.StatusUnprocessableEntity, errs...)
+		if op.Operation != ast.Query && r.Method == http.MethodGet {
+			sendErrorf(w, http.StatusUnprocessableEntity, "GET requests only allow query operations")
 			return
 		}
 
-		op, err := doc.GetOperation(reqParams.OperationName)
+		vars, err := validator.VariableValues(exec.Schema(), op, reqParams.Variables)
 		if err != nil {
-			sendErrorf(w, http.StatusUnprocessableEntity, err.Error())
+			sendError(w, http.StatusUnprocessableEntity, err)
 			return
 		}
-
-		reqCtx := cfg.newRequestContext(doc, reqParams.Query, reqParams.Variables)
+		reqCtx := cfg.newRequestContext(doc, reqParams.Query, vars)
 		ctx := graphql.WithRequestContext(r.Context(), reqCtx)
 
 		defer func() {
@@ -185,14 +236,22 @@ func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc 
 			}
 		}()
 
-		switch op.Type {
-		case query.Query:
+		if cfg.complexityLimit > 0 {
+			queryComplexity := complexity.Calculate(exec, op, vars)
+			if queryComplexity > cfg.complexityLimit {
+				sendErrorf(w, http.StatusUnprocessableEntity, "query has complexity %d, which exceeds the limit of %d", queryComplexity, cfg.complexityLimit)
+				return
+			}
+		}
+
+		switch op.Operation {
+		case ast.Query:
 			b, err := json.Marshal(exec.Query(ctx, op))
 			if err != nil {
 				panic(err)
 			}
 			w.Write(b)
-		case query.Mutation:
+		case ast.Mutation:
 			b, err := json.Marshal(exec.Mutation(ctx, op))
 			if err != nil {
 				panic(err)
@@ -204,25 +263,15 @@ func GraphQL(exec graphql.ExecutableSchema, options ...Option) http.HandlerFunc 
 	})
 }
 
-func sendError(w http.ResponseWriter, code int, errors ...*errors.QueryError) {
-	w.WriteHeader(code)
-	var errs []*graphql.Error
-	for _, err := range errors {
-		var locations []graphql.ErrorLocation
-		for _, l := range err.Locations {
-			locations = append(locations, graphql.ErrorLocation{
-				Line:   l.Line,
-				Column: l.Column,
-			})
-		}
+func jsonDecode(r io.Reader, val interface{}) error {
+	dec := json.NewDecoder(r)
+	dec.UseNumber()
+	return dec.Decode(val)
+}
 
-		errs = append(errs, &graphql.Error{
-			Message:   err.Message,
-			Path:      err.Path,
-			Locations: locations,
-		})
-	}
-	b, err := json.Marshal(&graphql.Response{Errors: errs})
+func sendError(w http.ResponseWriter, code int, errors ...*gqlerror.Error) {
+	w.WriteHeader(code)
+	b, err := json.Marshal(&graphql.Response{Errors: errors})
 	if err != nil {
 		panic(err)
 	}
@@ -230,5 +279,5 @@ func sendError(w http.ResponseWriter, code int, errors ...*errors.QueryError) {
 }
 
 func sendErrorf(w http.ResponseWriter, code int, format string, args ...interface{}) {
-	sendError(w, code, &errors.QueryError{Message: fmt.Sprintf(format, args...)})
+	sendError(w, code, &gqlerror.Error{Message: fmt.Sprintf(format, args...)})
 }

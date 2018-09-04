@@ -5,63 +5,39 @@ import (
 	"go/types"
 	"os"
 	"sort"
-	"strings"
 
-	"github.com/vektah/gqlgen/neelance/schema"
+	"github.com/vektah/gqlparser/ast"
 	"golang.org/x/tools/go/loader"
 )
 
 func (cfg *Config) buildInterfaces(types NamedTypes, prog *loader.Program) []*Interface {
 	var interfaces []*Interface
 	for _, typ := range cfg.schema.Types {
-		switch typ := typ.(type) {
-		case *schema.Union, *schema.Interface:
+		if typ.Kind == ast.Union || typ.Kind == ast.Interface {
 			interfaces = append(interfaces, cfg.buildInterface(types, typ, prog))
-		default:
-			continue
 		}
 	}
 
 	sort.Slice(interfaces, func(i, j int) bool {
-		return strings.Compare(interfaces[i].GQLType, interfaces[j].GQLType) == -1
+		return interfaces[i].GQLType < interfaces[j].GQLType
 	})
 
 	return interfaces
 }
 
-func (cfg *Config) buildInterface(types NamedTypes, typ schema.NamedType, prog *loader.Program) *Interface {
-	switch typ := typ.(type) {
+func (cfg *Config) buildInterface(types NamedTypes, typ *ast.Definition, prog *loader.Program) *Interface {
+	i := &Interface{NamedType: types[typ.Name]}
 
-	case *schema.Union:
-		i := &Interface{NamedType: types[typ.TypeName()]}
+	for _, implementor := range cfg.schema.GetPossibleTypes(typ) {
+		t := types[implementor.Name]
 
-		for _, implementor := range typ.PossibleTypes {
-			t := types[implementor.TypeName()]
-
-			i.Implementors = append(i.Implementors, InterfaceImplementor{
-				NamedType:     t,
-				ValueReceiver: cfg.isValueReceiver(types[typ.Name], t, prog),
-			})
-		}
-
-		return i
-
-	case *schema.Interface:
-		i := &Interface{NamedType: types[typ.TypeName()]}
-
-		for _, implementor := range typ.PossibleTypes {
-			t := types[implementor.TypeName()]
-
-			i.Implementors = append(i.Implementors, InterfaceImplementor{
-				NamedType:     t,
-				ValueReceiver: cfg.isValueReceiver(types[typ.Name], t, prog),
-			})
-		}
-
-		return i
-	default:
-		panic(fmt.Errorf("unknown interface %#v", typ))
+		i.Implementors = append(i.Implementors, InterfaceImplementor{
+			NamedType:     t,
+			ValueReceiver: cfg.isValueReceiver(types[typ.Name], t, prog),
+		})
 	}
+
+	return i
 }
 
 func (cfg *Config) isValueReceiver(intf *NamedType, implementor *NamedType, prog *loader.Program) bool {

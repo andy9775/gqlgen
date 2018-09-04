@@ -2,20 +2,19 @@ package codegen
 
 import (
 	"sort"
-	"strings"
 
-	"github.com/vektah/gqlgen/neelance/schema"
+	"github.com/vektah/gqlparser/ast"
 	"golang.org/x/tools/go/loader"
 )
 
-func (cfg *Config) buildModels(types NamedTypes, prog *loader.Program) ([]Model, error) {
+func (cfg *Config) buildModels(types NamedTypes, prog *loader.Program, imports *Imports) ([]Model, error) {
 	var models []Model
 
 	for _, typ := range cfg.schema.Types {
 		var model Model
-		switch typ := typ.(type) {
-		case *schema.Object:
-			obj, err := cfg.buildObject(types, typ)
+		switch typ.Kind {
+		case ast.Object:
+			obj, err := cfg.buildObject(types, typ, imports)
 			if err != nil {
 				return nil, err
 			}
@@ -23,8 +22,8 @@ func (cfg *Config) buildModels(types NamedTypes, prog *loader.Program) ([]Model,
 				continue
 			}
 			model = cfg.obj2Model(obj)
-		case *schema.InputObject:
-			obj, err := buildInput(types, typ)
+		case ast.InputObject:
+			obj, err := cfg.buildInput(types, typ)
 			if err != nil {
 				return nil, err
 			}
@@ -32,7 +31,7 @@ func (cfg *Config) buildModels(types NamedTypes, prog *loader.Program) ([]Model,
 				continue
 			}
 			model = cfg.obj2Model(obj)
-		case *schema.Interface, *schema.Union:
+		case ast.Interface, ast.Union:
 			intf := cfg.buildInterface(types, typ, prog)
 			if intf.IsUserDefined {
 				continue
@@ -41,12 +40,13 @@ func (cfg *Config) buildModels(types NamedTypes, prog *loader.Program) ([]Model,
 		default:
 			continue
 		}
+		model.Description = typ.Description // It's this or change both obj2Model and buildObject
 
 		models = append(models, model)
 	}
 
 	sort.Slice(models, func(i, j int) bool {
-		return strings.Compare(models[i].GQLType, models[j].GQLType) == -1
+		return models[i].GQLType < models[j].GQLType
 	})
 
 	return models, nil
@@ -65,11 +65,10 @@ func (cfg *Config) obj2Model(obj *Object) Model {
 		field := &obj.Fields[i]
 		mf := ModelField{Type: field.Type, GQLName: field.GQLName}
 
-		mf.GoVarName = ucFirst(field.GQLName)
-		if mf.IsScalar {
-			if mf.GoVarName == "Id" {
-				mf.GoVarName = "ID"
-			}
+		if field.GoFieldName != "" {
+			mf.GoFieldName = field.GoFieldName
+		} else {
+			mf.GoFieldName = field.GoNameExported()
 		}
 
 		model.Fields = append(model.Fields, mf)

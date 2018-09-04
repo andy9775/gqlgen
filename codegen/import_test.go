@@ -6,37 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInvalidPackagenames(t *testing.T) {
-	err := generate("invalid-packagename", `
-		type Query {
-			invalidIdentifier: InvalidIdentifier
-		}
-		type InvalidIdentifier {
-			id: Int!
-		}
-	`, TypeMap{
-		"InvalidIdentifier": {Model: "github.com/vektah/gqlgen/codegen/testdata/invalid-packagename.InvalidIdentifier"},
-	})
-
-	require.NoError(t, err)
-}
-
-func TestImportCollisions(t *testing.T) {
-	err := generate("complexinput", `
-		type Query {
-			collision: It
-		}
-		type It {
-			id: ID!
-		}
-
-	`, TypeMap{
-		"It": {Model: "github.com/vektah/gqlgen/codegen/testdata/introspection.It"},
-	})
-
-	require.NoError(t, err)
-}
-
 func TestDeterministicDecollisioning(t *testing.T) {
 	a := Imports{
 		imports: []*Import{

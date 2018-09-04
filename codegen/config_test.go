@@ -1,12 +1,10 @@
 package codegen
 
 import (
-	"go/build"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,7 +34,7 @@ func TestLoadDefaultConfig(t *testing.T) {
 		err = os.Chdir(filepath.Join(testDir, "testdata", "cfg", "subdir"))
 		require.NoError(t, err)
 
-		cfg, err = LoadDefaultConfig()
+		cfg, err = LoadConfigFromDefaultLocations()
 		require.NoError(t, err)
 		require.Equal(t, cfg.SchemaFilename, "inner")
 	})
@@ -45,41 +43,16 @@ func TestLoadDefaultConfig(t *testing.T) {
 		err = os.Chdir(filepath.Join(testDir, "testdata", "cfg", "otherdir"))
 		require.NoError(t, err)
 
-		cfg, err = LoadDefaultConfig()
+		cfg, err = LoadConfigFromDefaultLocations()
 		require.NoError(t, err)
 		require.Equal(t, cfg.SchemaFilename, "outer")
 	})
 
-	t.Run("will fallback to defaults", func(t *testing.T) {
+	t.Run("will return error if config doesn't exist", func(t *testing.T) {
 		err = os.Chdir(testDir)
 		require.NoError(t, err)
 
-		cfg, err = LoadDefaultConfig()
-		require.NoError(t, err)
-		require.Equal(t, cfg.SchemaFilename, "schema.graphql")
-	})
-}
-
-func Test_fullPackageName(t *testing.T) {
-	origBuildContext := build.Default
-	defer func() { build.Default = origBuildContext }()
-
-	t.Run("gopath longer than package name", func(t *testing.T) {
-		p := PackageConfig{Filename: "/b/src/y/foo/bar/baz.go"}
-		build.Default.GOPATH = "/a/src/xxxxxxxxxxxxxxxxxxxxxxxx:/b/src/y"
-		var got string
-		ok := assert.NotPanics(t, func() { got = p.ImportPath() })
-		if ok {
-			assert.Equal(t, "/b/src/y/foo/bar", got)
-		}
-	})
-	t.Run("stop searching on first hit", func(t *testing.T) {
-		p := PackageConfig{Filename: "/a/src/x/foo/bar/baz.go"}
-		build.Default.GOPATH = "/a/src/x:/b/src/y"
-		var got string
-		ok := assert.NotPanics(t, func() { got = p.ImportPath() })
-		if ok {
-			assert.Equal(t, "/a/src/x/foo/bar", got)
-		}
+		cfg, err = LoadConfigFromDefaultLocations()
+		require.True(t, os.IsNotExist(err))
 	})
 }

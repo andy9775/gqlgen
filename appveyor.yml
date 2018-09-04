@@ -3,7 +3,7 @@ version: "{build}"
 # Source Config
 
 skip_branch_with_pr: true
-clone_folder: c:\gopath\src\github.com\vektah\gqlgen
+clone_folder: c:\gopath\src\github.com\99designs\gqlgen
 
 # Build host
 
@@ -13,7 +13,7 @@ environment:
   PATH: '%PATH%;c:\gopath\bin'
 
 branches:
-  only: ["master"]
+  only: ["master", "next"]
 
 init:
   - git config --global core.autocrlf input
@@ -34,4 +34,13 @@ test_script:
   - go get -u github.com/vektah/gorunpkg github.com/golang/dep/cmd/dep
   - dep ensure -vendor-only
   - go generate ./...
-  - go test ./...
+  - go test -timeout 20m ./...
+
+  - echo "testing init"
+  - rd /s /q vendor
+  - go get ./...
+  - go install
+  - cd c:\gopath\src\github.com\99designs\
+  - mkdir init-project
+  - cd init-project
+  - gqlgen init

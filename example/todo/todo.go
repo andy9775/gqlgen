@@ -1,24 +1,55 @@
-//go:generate gorunpkg github.com/vektah/gqlgen -out generated.go
+//go:generate gorunpkg github.com/99designs/gqlgen
 
 package todo
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/99designs/gqlgen/graphql"
 	"github.com/mitchellh/mapstructure"
 )
 
-func New() *resolvers {
-	return &resolvers{
-		todos: []Todo{
-			{ID: 1, Text: "A todo not to forget", Done: false},
-			{ID: 2, Text: "This is the most important", Done: false},
-			{ID: 3, Text: "Please do this or else", Done: false},
+var you = &User{ID: 1, Name: "You"}
+var them = &User{ID: 2, Name: "Them"}
+
+func New() Config {
+	c := Config{
+		Resolvers: &resolvers{
+			todos: []Todo{
+				{ID: 1, Text: "A todo not to forget", Done: false, owner: you},
+				{ID: 2, Text: "This is the most important", Done: false, owner: you},
+				{ID: 3, Text: "Somebody else's todo", Done: true, owner: them},
+				{ID: 4, Text: "Please do this or else", Done: false, owner: you},
+			},
+			lastID: 4,
 		},
-		lastID: 3,
 	}
+	c.Directives.HasRole = func(ctx context.Context, obj interface{}, next graphql.Resolver, role Role) (interface{}, error) {
+		switch role {
+		case RoleAdmin:
+			// No admin for you!
+			return nil, nil
+		case RoleOwner:
+			// This is also available in context
+			if obj != graphql.GetResolverContext(ctx).Parent.Result {
+				return nil, fmt.Errorf("parent type mismatch")
+			}
+			ownable, isOwnable := obj.(Ownable)
+			if !isOwnable {
+				return nil, fmt.Errorf("obj cant be owned")
+			}
+
+			if ownable.Owner().ID != you.ID {
+				return nil, fmt.Errorf("you dont own that")
+			}
+		}
+
+		return next(ctx)
+	}
+	return c
 }
 
 type resolvers struct {
@@ -68,8 +99,9 @@ func (r *MutationResolver) CreateTodo(ctx context.Context, todo TodoInput) (Todo
 	newID := r.id()
 
 	newTodo := Todo{
-		ID:   newID,
-		Text: todo.Text,
+		ID:    newID,
+		Text:  todo.Text,
+		owner: you,
 	}
 
 	if todo.Done != nil {

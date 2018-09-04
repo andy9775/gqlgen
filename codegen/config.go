@@ -8,26 +8,29 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/99designs/gqlgen/internal/gopath"
 	"github.com/pkg/errors"
-	"github.com/vektah/gqlgen/neelance/schema"
+	"github.com/vektah/gqlparser/ast"
 	"gopkg.in/yaml.v2"
 )
 
-var defaults = Config{
-	SchemaFilename: "schema.graphql",
-	Model:          PackageConfig{Filename: "models_gen.go"},
-	Exec:           PackageConfig{Filename: "generated.go"},
-}
-
 var cfgFilenames = []string{".gqlgen.yml", "gqlgen.yml", "gqlgen.yaml"}
 
-// LoadDefaultConfig looks for a config file in the current directory, and all parent directories
+// DefaultConfig creates a copy of the default config
+func DefaultConfig() *Config {
+	return &Config{
+		SchemaFilename: "schema.graphql",
+		Model:          PackageConfig{Filename: "models_gen.go"},
+		Exec:           PackageConfig{Filename: "generated.go"},
+	}
+}
+
+// LoadConfigFromDefaultLocations looks for a config file in the current directory, and all parent directories
 // walking up the tree. The closest config file will be returned.
-func LoadDefaultConfig() (*Config, error) {
+func LoadConfigFromDefaultLocations() (*Config, error) {
 	cfgFile, err := findCfg()
-	if err != nil || cfgFile == "" {
-		cpy := defaults
-		return &cpy, err
+	if err != nil {
+		return nil, err
 	}
 
 	err = os.Chdir(filepath.Dir(cfgFile))
@@ -39,18 +42,20 @@ func LoadDefaultConfig() (*Config, error) {
 
 // LoadConfig reads the gqlgen.yml config file
 func LoadConfig(filename string) (*Config, error) {
-	config := defaults
+	config := DefaultConfig()
 
 	b, err := ioutil.ReadFile(filename)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to read config")
 	}
 
-	if err := yaml.UnmarshalStrict(b, &config); err != nil {
+	if err := yaml.UnmarshalStrict(b, config); err != nil {
 		return nil, errors.Wrap(err, "unable to parse config")
 	}
 
-	return &config, nil
+	config.FilePath = filename
+
+	return config, nil
 }
 
 type Config struct {
@@ -58,14 +63,19 @@ type Config struct {
 	SchemaStr      string        `yaml:"-"`
 	Exec           PackageConfig `yaml:"exec"`
 	Model          PackageConfig `yaml:"model"`
+	Resolver       PackageConfig `yaml:"resolver,omitempty"`
 	Models         TypeMap       `yaml:"models,omitempty"`
+	StructTag      string        `yaml:"struct_tag,omitempty"`
 
-	schema *schema.Schema `yaml:"-"`
+	FilePath string `yaml:"-"`
+
+	schema *ast.Schema `yaml:"-"`
 }
 
 type PackageConfig struct {
 	Filename string `yaml:"filename,omitempty"`
 	Package  string `yaml:"package,omitempty"`
+	Type     string `yaml:"type,omitempty"`
 }
 
 type TypeMapEntry struct {
@@ -74,7 +84,8 @@ type TypeMapEntry struct {
 }
 
 type TypeMapField struct {
-	Resolver bool `yaml:"resolver"`
+	Resolver   bool   `yaml:"resolver"`
+	FieldName  string `yaml:"fieldName"`
 }
 
 func (c *PackageConfig) normalize() error {
@@ -98,22 +109,11 @@ func (c *PackageConfig) normalize() error {
 }
 
 func (c *PackageConfig) ImportPath() string {
-	dir := filepath.ToSlash(c.Dir())
-	for _, gopath := range filepath.SplitList(build.Default.GOPATH) {
-		gopath = filepath.ToSlash(gopath) + "/src/"
-		if len(gopath) > len(dir) {
-			continue
-		}
-		if strings.EqualFold(gopath, dir[0:len(gopath)]) {
-			dir = dir[len(gopath):]
-			break
-		}
-	}
-	return dir
+	return gopath.MustDir2Import(c.Dir())
 }
 
 func (c *PackageConfig) Dir() string {
-	return filepath.ToSlash(filepath.Dir(c.Filename))
+	return filepath.Dir(c.Filename)
 }
 
 func (c *PackageConfig) Check() error {
@@ -126,6 +126,10 @@ func (c *PackageConfig) Check() error {
 	return nil
 }
 
+func (c *PackageConfig) IsDefined() bool {
+	return c.Filename != ""
+}
+
 func (cfg *Config) Check() error {
 	if err := cfg.Models.Check(); err != nil {
 		return errors.Wrap(err, "config.models")
@@ -135,6 +139,9 @@ func (cfg *Config) Check() error {
 	}
 	if err := cfg.Model.Check(); err != nil {
 		return errors.Wrap(err, "config.model")
+	}
+	if err := cfg.Resolver.Check(); err != nil {
+		return errors.Wrap(err, "config.resolver")
 	}
 	return nil
 }
@@ -168,6 +175,10 @@ func findCfg() (string, error) {
 	for cfg == "" && dir != filepath.Dir(dir) {
 		dir = filepath.Dir(dir)
 		cfg = findCfgInDir(dir)
+	}
+
+	if cfg == "" {
+		return "", os.ErrNotExist
 	}
 
 	return cfg, nil

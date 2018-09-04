@@ -3,10 +3,9 @@ package codegen
 import (
 	"go/types"
 	"sort"
-	"strings"
 
 	"github.com/pkg/errors"
-	"github.com/vektah/gqlgen/neelance/schema"
+	"github.com/vektah/gqlparser/ast"
 	"golang.org/x/tools/go/loader"
 )
 
@@ -14,9 +13,9 @@ func (cfg *Config) buildInputs(namedTypes NamedTypes, prog *loader.Program, impo
 	var inputs Objects
 
 	for _, typ := range cfg.schema.Types {
-		switch typ := typ.(type) {
-		case *schema.InputObject:
-			input, err := buildInput(namedTypes, typ)
+		switch typ.Kind {
+		case ast.InputObject:
+			input, err := cfg.buildInput(namedTypes, typ)
 			if err != nil {
 				return nil, err
 			}
@@ -27,7 +26,7 @@ func (cfg *Config) buildInputs(namedTypes NamedTypes, prog *loader.Program, impo
 			}
 			if def != nil {
 				input.Marshaler = buildInputMarshaler(typ, def)
-				bindErrs := bindObject(def.Type(), input, imports)
+				bindErrs := bindObject(def.Type(), input, imports, cfg.StructTag)
 				if len(bindErrs) > 0 {
 					return nil, bindErrs
 				}
@@ -38,24 +37,35 @@ func (cfg *Config) buildInputs(namedTypes NamedTypes, prog *loader.Program, impo
 	}
 
 	sort.Slice(inputs, func(i, j int) bool {
-		return strings.Compare(inputs[i].GQLType, inputs[j].GQLType) == -1
+		return inputs[i].GQLType < inputs[j].GQLType
 	})
 
 	return inputs, nil
 }
 
-func buildInput(types NamedTypes, typ *schema.InputObject) (*Object, error) {
-	obj := &Object{NamedType: types[typ.TypeName()]}
+func (cfg *Config) buildInput(types NamedTypes, typ *ast.Definition) (*Object, error) {
+	obj := &Object{NamedType: types[typ.Name]}
+	typeEntry, entryExists := cfg.Models[typ.Name]
 
-	for _, field := range typ.Values {
+	for _, field := range typ.Fields {
 		newField := Field{
-			GQLName: field.Name.Name,
+			GQLName: field.Name,
 			Type:    types.getType(field.Type),
 			Object:  obj,
 		}
 
-		if field.Default != nil {
-			newField.Default = field.Default.Value(nil)
+		if entryExists {
+			if typeField, ok := typeEntry.Fields[field.Name]; ok {
+				newField.GoFieldName = typeField.FieldName
+			}
+		}
+
+		if field.DefaultValue != nil {
+			var err error
+			newField.Default, err = field.DefaultValue.Value(nil)
+			if err != nil {
+				return nil, errors.Errorf("default value for %s.%s is not valid: %s", typ.Name, field.Name, err.Error())
+			}
 		}
 
 		if !newField.Type.IsInput && !newField.Type.IsScalar {
@@ -70,7 +80,7 @@ func buildInput(types NamedTypes, typ *schema.InputObject) (*Object, error) {
 
 // if user has implemented an UnmarshalGQL method on the input type manually, use it
 // otherwise we will generate one.
-func buildInputMarshaler(typ *schema.InputObject, def types.Object) *Ref {
+func buildInputMarshaler(typ *ast.Definition, def types.Object) *Ref {
 	switch def := def.(type) {
 	case *types.TypeName:
 		namedType := def.Type().(*types.Named)
